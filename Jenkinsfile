@@ -142,17 +142,17 @@ chmod 600 "\$EC2_KEYFILE"
 
 echo "Deploying ${ECR_IMAGE}:${TAG} to EC2 host ${params.EC2_HOST}"
 
-# Pass necessary variables via environment for remote host
-ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "\$EC2_USER@${params.EC2_HOST}" \
-APP_NAME="${APP_NAME}" \
-PORT="${EXPOSE_PORT}" \
-ECR="${ECR_IMAGE}" \
-TAG="${TAG}" \
-REGION="${AWS_REGION}" \
-REGISTRY="${ECR_REGISTRY}" \
-bash -s <<-REMOTE
+ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "\$EC2_USER@${params.EC2_HOST}" bash -s <<-REMOTE
 #!/bin/bash
 set -eu
+
+# Assign all Jenkins variables directly in remote shell
+APP_NAME="${APP_NAME}"
+PORT="${EXPOSE_PORT}"
+ECR="${ECR_IMAGE}"
+TAG="${TAG}"
+REGION="${AWS_REGION}"
+REGISTRY="${ECR_REGISTRY}"
 
 echo "Connected to remote host"
 echo "Deploying container \$APP_NAME on port \$PORT in region \$REGION"
