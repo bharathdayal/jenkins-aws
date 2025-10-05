@@ -129,42 +129,60 @@ stage('Prep Gradle') {
     // ---- NEW: Deploy on EC2 (pull from ECR and (re)start) ----
 stage('Deploy to EC2') {
   steps {
-    withCredentials([sshUserPrivateKey(
-        credentialsId: 'ec2-ssh',
-        keyFileVariable: 'EC2_KEYFILE',
-        usernameVariable: 'EC2_USER'
-    )]) {
-      sh """#!/bin/bash
+    script {
+      // Resolve values in Groovy (params -> env -> default)
+      def resolvedAppName = (params.containsKey('APP_NAME') && params.APP_NAME) ? params.APP_NAME : (env.APP_NAME ?: 'myapp')
+      def resolvedPort    = (params.containsKey('EXPOSE_PORT') && params.EXPOSE_PORT) ? params.EXPOSE_PORT : (env.EXPOSE_PORT ?: '8080')
+      def resolvedEcrImage= (params.containsKey('ECR_IMAGE') && params.ECR_IMAGE) ? params.ECR_IMAGE : (env.ECR_IMAGE ?: "${ECR_IMAGE}")
+      def resolvedTag     = (params.containsKey('TAG') && params.TAG) ? params.TAG : (env.TAG ?: "${TAG}")
+      def resolvedRegion  = (params.containsKey('AWS_REGION') && params.AWS_REGION) ? params.AWS_REGION : (env.AWS_REGION ?: "${AWS_REGION}")
+      def resolvedRegistry= (params.containsKey('ECR_REGISTRY') && params.ECR_REGISTRY) ? params.ECR_REGISTRY : (env.ECR_REGISTRY ?: "${ECR_REGISTRY}")
+      def resolvedHost    = (params.containsKey('EC2_HOST') && params.EC2_HOST) ? params.EC2_HOST : (env.EC2_HOST ?: "${params.EC2_HOST}")
+      def resolvedUser    = (params.containsKey('EC2_USER') && params.EC2_USER) ? params.EC2_USER : (env.EC2_USER ?: "${params.EC2_USER}")
+
+      // Echo resolved values to pipeline log (for debugging)
+      echo "Resolved values: APP_NAME=${resolvedAppName}, PORT=${resolvedPort}, ECR=${resolvedEcrImage}, TAG=${resolvedTag}, REGION=${resolvedRegion}, REGISTRY=${resolvedRegistry}, HOST=${resolvedHost}, USER=${resolvedUser}"
+
+      withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh',
+                                         keyFileVariable: 'EC2_KEYFILE',
+                                         usernameVariable: 'SSH_USER')]) {
+sh """#!/bin/bash
 set -eu
 
-echo "Using SSH key: \$EC2_KEYFILE"
+# show which keyfile Jenkins provided
+echo "Using SSH keyfile: \$EC2_KEYFILE (exists: \$( [ -f \"\$EC2_KEYFILE\" ] && echo yes || echo no ))"
 chmod 600 "\$EC2_KEYFILE"
 
-echo "Deploying ${ECR_IMAGE}:${TAG} to EC2 host ${params.EC2_HOST}"
+# show resolved values again in build log (sanity)
+echo "Deploying ${resolvedEcrImage}:${resolvedTag} to ${resolvedHost} as ${resolvedUser}"
+echo "APP_NAME=${resolvedAppName} PORT=${resolvedPort} REGION=${resolvedRegion} REGISTRY=${resolvedRegistry}"
 
-ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "\$EC2_USER@${params.EC2_HOST}" bash -s <<-REMOTE
+# SSH and run remote script; Jenkins variables interpolated above are placed directly into the heredoc
+ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "${resolvedUser}@${resolvedHost}" bash -s <<-REMOTE
 #!/bin/bash
 set -eu
 
-# Assign all Jenkins variables directly in remote shell
-APP_NAME="${APP_NAME}"
-PORT="${EXPOSE_PORT}"
-ECR="${ECR_IMAGE}"
-TAG="${TAG}"
-REGION="${AWS_REGION}"
-REGISTRY="${ECR_REGISTRY}"
+# Jenkins-provided values (hard-coded into the remote script)
+APP_NAME="${resolvedAppName}"
+PORT="${resolvedPort}"
+ECR="${resolvedEcrImage}"
+TAG="${resolvedTag}"
+REGION="${resolvedRegion}"
+REGISTRY="${resolvedRegistry}"
 
-echo "Connected to remote host"
-echo "Deploying container \$APP_NAME on port \$PORT in region \$REGION"
+echo "Remote: connected, will deploy \$APP_NAME on port \$PORT in region \$REGION"
+
+# verify docker + aws presence
+command -v docker >/dev/null 2>&1 || { echo "docker not found on remote host"; exit 2; }
+command -v aws >/dev/null 2>&1 || { echo "aws cli not found on remote host"; exit 2; }
 
 echo "Logging in to ECR..."
-aws ecr get-login-password --region "\$REGION" | \
-  docker login --username AWS --password-stdin "\$REGISTRY"
+aws ecr get-login-password --region "\$REGION" | docker login --username AWS --password-stdin "\$REGISTRY"
 
-echo "Pulling Docker image: \$ECR:\$TAG"
+echo "Pulling image: \$ECR:\$TAG"
 docker pull "\$ECR:\$TAG"
 
-# Stop & remove existing container if present
+# stop & remove existing container if present
 if docker ps -a --format '{{.Names}}' | grep -q "^\$APP_NAME\$"; then
   echo "Stopping existing container \$APP_NAME..."
   docker stop "\$APP_NAME" || true
@@ -177,12 +195,13 @@ docker run -d --name "\$APP_NAME" -p "\$PORT:\$PORT" --restart=always "\$ECR:\$T
 echo "Pruning old images..."
 docker image prune -f >/dev/null 2>&1 || true
 
-echo "Deployment completed successfully."
+echo "Deployment finished successfully."
 REMOTE
-      """
-    }
-  }
-}
+"""
+      } // withCredentials
+    } // script
+  } // steps
+} // stage
   }
 
   post {
