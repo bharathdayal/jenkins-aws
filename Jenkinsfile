@@ -127,61 +127,55 @@ stage('Prep Gradle') {
     }
 
     // ---- NEW: Deploy on EC2 (pull from ECR and (re)start) ----
-    stage('Deploy to EC2') {
+   stage('Deploy to EC2') {
       steps {
         sshagent(credentials: ['ec2-ssh']) {
-          sh '''
-            set -e
-
-            echo "Logging in to ECR on remote host and deploying ${ECR_IMAGE}:${TAG}"
-
+          sh '''#!/bin/bash
             set -euo pipefail
-
-            echo "=== inside sshagent block ==="
+    
+            echo "=== Inside sshagent block ==="
             echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
             echo "SSH_AGENT_PID=$SSH_AGENT_PID"
-        
-            echo "ssh-add -l output:"
+    
+            echo "Listing loaded SSH keys:"
             ssh-add -l || true
-        
-            echo "Checking ssh binary:"
-            ssh -V || true
-        
-            echo "Trying verbose SSH to see auth attempts (will fail if host rejects):"
-            ssh -vvv -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "echo 'remote OK' || true"
-
-
+    
+            echo "Logging in to ECR on remote host and deploying ${ECR_IMAGE}:${TAG}"
+    
             ssh -o StrictHostKeyChecking=no ${params.EC2_USER}@${params.EC2_HOST} bash -s <<'REMOTE'
-              
+              #!/bin/bash
+              set -euo pipefail
+    
               APP_NAME="${APP_NAME}"
               PORT="${EXPOSE_PORT}"
               ECR="${ECR_IMAGE}"
               TAG="${TAG}"
               REGION="${AWS_REGION}"
-
-              # Login to ECR on the EC2 machine (requires AWS CLI + credentials/role on EC2)
+    
+              echo "Logging in to ECR on remote host..."
               aws ecr get-login-password --region "$REGION" | \
-                 docker login --username AWS --password-stdin ${ECR_REGISTRY}
-
-              # Pull the new image
+                docker login --username AWS --password-stdin ${ECR_REGISTRY}
+    
+              echo "Pulling Docker image: ${ECR}:${TAG}"
               docker pull "${ECR}:${TAG}"
-
+    
               # Stop & remove existing container if present
               if docker ps -a --format '{{.Names}}' | grep -q "^${APP_NAME}$"; then
                 echo "Stopping existing container ${APP_NAME}..."
                 docker stop "${APP_NAME}" || true
                 docker rm   "${APP_NAME}" || true
               fi
-
-              # Run the new container
+    
               echo "Starting container ${APP_NAME} on port ${PORT}..."
               docker run -d --name "${APP_NAME}" \
                 -p ${PORT}:${PORT} \
                 --restart=always \
                 "${ECR}:${TAG}"
-
-              # Optionally prune old images (keep current and latest)
+    
+              echo "Pruning old images..."
               docker image prune -f >/dev/null 2>&1 || true
+    
+              echo "Deployment completed successfully."
             REMOTE
           '''
         }
