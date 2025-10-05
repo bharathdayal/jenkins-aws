@@ -130,12 +130,12 @@ stage('Prep Gradle') {
    stage('Deploy to EC2') {
       steps {
         sshagent(credentials: ['ec2-ssh']) {
-          sh '''#!/bin/bash
-            set -euo pipefail
+          sh """#!/bin/bash
+            set -eu  # (removed pipefail for POSIX shells)
     
             echo "=== Inside sshagent block ==="
-            echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
-            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+            echo "SSH_AUTH_SOCK=\$SSH_AUTH_SOCK"
+            echo "SSH_AGENT_PID=\$SSH_AGENT_PID"
     
             echo "Listing loaded SSH keys:"
             ssh-add -l || true
@@ -144,40 +144,41 @@ stage('Prep Gradle') {
     
             ssh -o StrictHostKeyChecking=no ${params.EC2_USER}@${params.EC2_HOST} bash -s <<'REMOTE'
               #!/bin/bash
-              set -euo pipefail
+              set -eu
     
               APP_NAME="${APP_NAME}"
               PORT="${EXPOSE_PORT}"
               ECR="${ECR_IMAGE}"
               TAG="${TAG}"
               REGION="${AWS_REGION}"
+              REGISTRY="${ECR_REGISTRY}"
     
               echo "Logging in to ECR on remote host..."
-              aws ecr get-login-password --region "$REGION" | \
-                docker login --username AWS --password-stdin ${ECR_REGISTRY}
+              aws ecr get-login-password --region "\$REGION" | \
+                docker login --username AWS --password-stdin "\$REGISTRY"
     
-              echo "Pulling Docker image: ${ECR}:${TAG}"
-              docker pull "${ECR}:${TAG}"
+              echo "Pulling Docker image: \$ECR:\$TAG"
+              docker pull "\$ECR:\$TAG"
     
               # Stop & remove existing container if present
-              if docker ps -a --format '{{.Names}}' | grep -q "^${APP_NAME}$"; then
-                echo "Stopping existing container ${APP_NAME}..."
-                docker stop "${APP_NAME}" || true
-                docker rm   "${APP_NAME}" || true
+              if docker ps -a --format '{{.Names}}' | grep -q "^\$APP_NAME\$"; then
+                echo "Stopping existing container \$APP_NAME..."
+                docker stop "\$APP_NAME" || true
+                docker rm "\$APP_NAME" || true
               fi
     
-              echo "Starting container ${APP_NAME} on port ${PORT}..."
-              docker run -d --name "${APP_NAME}" \
-                -p ${PORT}:${PORT} \
+              echo "Starting container \$APP_NAME on port \$PORT..."
+              docker run -d --name "\$APP_NAME" \
+                -p "\$PORT:\$PORT" \
                 --restart=always \
-                "${ECR}:${TAG}"
+                "\$ECR:\$TAG"
     
               echo "Pruning old images..."
               docker image prune -f >/dev/null 2>&1 || true
     
               echo "Deployment completed successfully."
-            REMOTE
-          '''
+    REMOTE
+          """
         }
       }
     }
