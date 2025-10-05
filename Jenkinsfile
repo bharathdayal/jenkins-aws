@@ -127,50 +127,62 @@ stage('Prep Gradle') {
     }
 
     // ---- NEW: Deploy on EC2 (pull from ECR and (re)start) ----
-     stage('Deploy to EC2') {
-      steps {
-        sshagent(credentials: ['ec2-ssh']) {
-          sh '''
-            set -e
+stage('Deploy to EC2') {
+  steps {
+    withCredentials([sshUserPrivateKey(
+        credentialsId: 'ec2-ssh',
+        keyFileVariable: 'EC2_KEYFILE',
+        usernameVariable: 'EC2_USER'
+    )]) {
+      sh """#!/bin/bash
+set -eu
 
-            echo "Logging in to ECR on remote host and deploying ${ECR_IMAGE}:${TAG}"
+echo "Using SSH key: \$EC2_KEYFILE"
+chmod 600 "\$EC2_KEYFILE"
 
-            ssh -o StrictHostKeyChecking=no ${params.EC2_USER}@${params.EC2_HOST} bash -s <<'REMOTE'
-              
-              APP_NAME="${APP_NAME}"
-              PORT="${EXPOSE_PORT}"
-              ECR="${ECR_IMAGE}"
-              TAG="${TAG}"
-              REGION="${AWS_REGION}"
+echo "Deploying ${ECR_IMAGE}:${TAG} to EC2 host ${params.EC2_HOST}"
 
-              # Login to ECR on the EC2 machine (requires AWS CLI + credentials/role on EC2)
-              aws ecr get-login-password --region "$REGION" | \
-                 docker login --username AWS --password-stdin ${ECR_REGISTRY}
+# Pass necessary variables via environment for remote host
+ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "\$EC2_USER@${params.EC2_HOST}" \
+APP_NAME="${APP_NAME}" \
+PORT="${EXPOSE_PORT}" \
+ECR="${ECR_IMAGE}" \
+TAG="${TAG}" \
+REGION="${AWS_REGION}" \
+REGISTRY="${ECR_REGISTRY}" \
+bash -s <<-REMOTE
+#!/bin/bash
+set -eu
 
-              # Pull the new image
-              docker pull "${ECR}:${TAG}"
+echo "Connected to remote host"
+echo "Deploying container \$APP_NAME on port \$PORT in region \$REGION"
 
-              # Stop & remove existing container if present
-              if docker ps -a --format '{{.Names}}' | grep -q "^${APP_NAME}$"; then
-                echo "Stopping existing container ${APP_NAME}..."
-                docker stop "${APP_NAME}" || true
-                docker rm   "${APP_NAME}" || true
-              fi
+echo "Logging in to ECR..."
+aws ecr get-login-password --region "\$REGION" | \
+  docker login --username AWS --password-stdin "\$REGISTRY"
 
-              # Run the new container
-              echo "Starting container ${APP_NAME} on port ${PORT}..."
-              docker run -d --name "${APP_NAME}" \
-                -p ${PORT}:${PORT} \
-                --restart=always \
-                "${ECR}:${TAG}"
+echo "Pulling Docker image: \$ECR:\$TAG"
+docker pull "\$ECR:\$TAG"
 
-              # Optionally prune old images (keep current and latest)
-              docker image prune -f >/dev/null 2>&1 || true
-            REMOTE
-          '''
-        }
-      }
+# Stop & remove existing container if present
+if docker ps -a --format '{{.Names}}' | grep -q "^\$APP_NAME\$"; then
+  echo "Stopping existing container \$APP_NAME..."
+  docker stop "\$APP_NAME" || true
+  docker rm "\$APP_NAME" || true
+fi
+
+echo "Starting container \$APP_NAME on port \$PORT..."
+docker run -d --name "\$APP_NAME" -p "\$PORT:\$PORT" --restart=always "\$ECR:\$TAG"
+
+echo "Pruning old images..."
+docker image prune -f >/dev/null 2>&1 || true
+
+echo "Deployment completed successfully."
+REMOTE
+      """
     }
+  }
+}
   }
 
   post {
