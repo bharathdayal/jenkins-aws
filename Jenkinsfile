@@ -127,29 +127,31 @@ stage('Prep Gradle') {
     }
 
     // ---- NEW: Deploy on EC2 (pull from ECR and (re)start) ----
-   stage('Deploy to EC2') {
+     stage('Deploy to EC2') {
     steps {
-    withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh',
-                                       keyFileVariable: 'EC2_KEYFILE',
-                                       usernameVariable: 'EC2_USER')]) {
-      sh """#!/bin/bash
+      withCredentials([sshUserPrivateKey(
+          credentialsId: 'ec2-ssh',
+          keyFileVariable: 'EC2_KEYFILE',
+          usernameVariable: 'EC2_USER'
+      )]) {
+        sh """#!/bin/bash
         set -eu
-
+        
         echo "Using SSH key: \$EC2_KEYFILE"
         chmod 600 "\$EC2_KEYFILE"
-
+        
         echo "Deploying ${ECR_IMAGE}:${TAG} to EC2 host ${params.EC2_HOST}"
-
-        ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "\$EC2_USER@${params.EC2_HOST}" bash -s <<'REMOTE'
+        
+        ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "\$EC2_USER@${params.EC2_HOST}" bash -s <<-REMOTE
         #!/bin/bash
         set -eu
         
-        APP_NAME="${APP_NAME}"
-        PORT="${EXPOSE_PORT}"
-        ECR="${ECR_IMAGE}"
-        TAG="${TAG}"
-        REGION="${AWS_REGION}"
-        REGISTRY="${ECR_REGISTRY}"
+        APP_NAME="\${APP_NAME}"
+        PORT="\${EXPOSE_PORT}"
+        ECR="\${ECR_IMAGE}"
+        TAG="\${TAG}"
+        REGION="\${AWS_REGION}"
+        REGISTRY="\${ECR_REGISTRY}"
         
         echo "Logging in to ECR..."
         aws ecr get-login-password --region "\$REGION" | \
@@ -176,7 +178,7 @@ stage('Prep Gradle') {
               """
             }
           }
-        }
+      }
   }
 
   post {
