@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Code Demos</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; display:flex; height:100vh; }
+    .nav { width: 240px; background:#f7f7f7; padding:20px; box-shadow: 2px 0 6px rgba(0,0,0,0.05); overflow:auto;}
+    .content { flex:1; padding:24px; overflow:auto; }
+    .section { margin-bottom: 16px; }
+    .subitem { cursor:pointer; padding:8px; border-radius:6px; margin:4px 0; }
+    .subitem:hover { background: #e9e9e9; }
+    .result { white-space:pre-wrap; background:#fff; border:1px solid #eee; padding:12px; border-radius:6px; margin-top:12px; min-height:60px;}
+    .btn { padding:6px 10px; border-radius:6px; cursor:pointer; border:1px solid #ccc; background:#fafafa; }
+  </style>
+</head>
+<body>
+
+  <div class="nav">
+    <h3>Sections</h3>
+
+    <div class="section">
+      <strong>DSA</strong>
+      <div class="subitem" onclick="runDSA('palindrome')">Palindrome</div>
+      <div class="subitem" onclick="runDSA('arrayNonZero')">ArrayNonZero</div>
+      <div class="subitem" onclick="runDSA('longSubString')">LongSubString</div>
+    </div>
+
+    <div class="section">
+      <strong>Stream API</strong>
+      <div class="subitem" onclick="runStream('evenArray')">Even number - int[]</div>
+      <div class="subitem" onclick="runStream('evenList')">Even number - List</div>
+      <div class="subitem" onclick="runStream('squares')">Square number - List</div>
+      <div style="margin-top:8px;">
+        <small>Sum custom list (JSON body)</small><br/>
+        <button class="btn" onclick="runSumExample()">Run Sum Example</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="content">
+    <h1>Code Demo Runner</h1>
+    <p>Click a subsection to execute its example. Results are shown below.</p>
+
+    <div>
+      <label>Input (for examples that accept input):</label>
+      <input id="inputField" type="text" placeholder="e.g. malayalam or abcabcbb" style="width:300px; padding:6px; margin-left:8px;">
+      <button class="btn" onclick="setInput()">Set</button>
+      <span id="currentInput" style="margin-left:12px; color:#666;"></span>
+    </div>
+
+    <div id="resultBox" class="result">Results will appear here...</div>
+  </div>
+
+  <script>
+    let currentInput = '';
+
+    function setInput() {
+      const v = document.getElementById('inputField').value.trim();
+      currentInput = v;
+      document.getElementById('currentInput').textContent = v ? 'Input: ' + v : '';
+    }
+
+    async function runDSA(name) {
+      const inputQuery = currentInput ? '?input=' + encodeURIComponent(currentInput) : '';
+      const url = '/run/dsa/' + (name === 'longSubString' ? 'longSubString' : (name === 'arrayNonZero' ? 'arrayNonZero' : name));
+      const fetchUrl = url + (inputQuery && (name !== 'arrayNonZero') ? inputQuery : '');
+      showResult('Running ' + name + '...');
+      try {
+        const res = await fetch(fetchUrl, { method: 'POST' });
+        const text = await res.text();
+        showResult(text);
+      } catch (e) { showResult('Error: ' + e.message); }
+    }
+
+    async function runStream(name) {
+      showResult('Running ' + name + '...');
+      const url = '/run/streams/' + (name === 'evenArray' ? 'evenArray' : (name === 'evenList' ? 'evenList' : 'squares'));
+      try {
+        const res = await fetch(url, { method: 'POST' });
+        const text = await res.text();
+        showResult(text);
+      } catch(e) { showResult('Error: ' + e.message); }
+    }
+
+    async function runSumExample() {
+      showResult('Running sum example with [1,2,3,4,5,20] ...');
+      const url = '/run/streams/sum';
+      try {
+        const res = await fetch(url, {
+          method:'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify([1,2,3,4,5,20])
+        });
+        const text = await res.text();
+        showResult(text);
+      } catch(e) { showResult('Error: ' + e.message); }
+    }
+
+    function showResult(s) {
+      document.getElementById('resultBox').textContent = s;
+    }
+  </script>
+
+</body>
+</html>
