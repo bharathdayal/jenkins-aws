@@ -135,6 +135,22 @@ stage('Prep Gradle') {
 
             echo "Logging in to ECR on remote host and deploying ${ECR_IMAGE}:${TAG}"
 
+            set -euo pipefail
+
+            echo "=== inside sshagent block ==="
+            echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+        
+            echo "ssh-add -l output:"
+            ssh-add -l || true
+        
+            echo "Checking ssh binary:"
+            ssh -V || true
+        
+            echo "Trying verbose SSH to see auth attempts (will fail if host rejects):"
+            ssh -vvv -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "echo 'remote OK' || true"
+
+
             ssh -o StrictHostKeyChecking=no ${params.EC2_USER}@${params.EC2_HOST} bash -s <<'REMOTE'
               
               APP_NAME="${APP_NAME}"
