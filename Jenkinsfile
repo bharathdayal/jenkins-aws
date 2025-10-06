@@ -189,7 +189,7 @@ else
       $_RUN_SUDO apt-get update -y
       $_RUN_SUDO apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       $_RUN_SUDO systemctl enable --now docker || true
-    elif [ -f /etc/redhat-release ] || ( [ -f /etc/os-release ] && grep -qi "amzn\|centos\|rhel" /etc/os-release ); then
+    elif [ -f /etc/redhat-release ] || ( [ -f /etc/os-release ] && grep -Eqi "amzn|centos|rhel" /etc/os-release ); then 
       echo "Installing Docker on RHEL/CentOS/Amazon Linux..."
       $_RUN_SUDO yum install -y yum-utils
       $_RUN_SUDO yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
