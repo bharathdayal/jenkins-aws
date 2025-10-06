@@ -130,46 +130,50 @@ stage('Prep Gradle') {
 stage('Deploy to EC2') {
   steps {
     script {
-      // resolve values early and fail fast if missing
-      def resolvedAppName = (params?.APP_NAME ?: env.APP_NAME) ?: error("Missing APP_NAME")
-      def resolvedPort    = (params?.EXPOSE_PORT ?: env.EXPOSE_PORT) ?: error("Missing EXPOSE_PORT")
-      def resolvedEcrImage= (params?.ECR_IMAGE ?: env.ECR_IMAGE) ?: "${ECR_IMAGE ?: ''}"
-      def resolvedTag     = (params?.TAG ?: env.TAG) ?: "${TAG ?: 'latest'}"
-      def resolvedRegion  = (params?.AWS_REGION ?: env.AWS_REGION) ?: "${AWS_REGION ?: ''}"
-      def resolvedRegistry= (params?.ECR_REGISTRY ?: env.ECR_REGISTRY) ?: "${ECR_REGISTRY ?: ''}"
-      def resolvedHost    = (params?.EC2_HOST ?: env.EC2_HOST) ?: error("Missing EC2_HOST")
-      def resolvedUser    = (params?.EC2_USER ?: env.EC2_USER) ?: error("Missing EC2_USER")
+      // Resolve Jenkins params/env into Groovy variables (fail fast if missing)
+      def resolvedAppName  = (params?.APP_NAME ?: env.APP_NAME) ?: error("Missing APP_NAME")
+      def resolvedPort     = (params?.EXPOSE_PORT ?: env.EXPOSE_PORT) ?: error("Missing EXPOSE_PORT")
+      def resolvedEcrImage = (params?.ECR_IMAGE ?: env.ECR_IMAGE) ?: (this.binding.hasVariable('ECR_IMAGE') ? ECR_IMAGE : '')
+      def resolvedTag      = (params?.TAG ?: env.TAG) ?: (this.binding.hasVariable('TAG') ? TAG : 'latest')
+      def resolvedRegion   = (params?.AWS_REGION ?: env.AWS_REGION) ?: (this.binding.hasVariable('AWS_REGION') ? AWS_REGION : '')
+      def resolvedRegistry = (params?.ECR_REGISTRY ?: env.ECR_REGISTRY) ?: (this.binding.hasVariable('ECR_REGISTRY') ? ECR_REGISTRY : '')
+      def resolvedHost     = (params?.EC2_HOST ?: env.EC2_HOST) ?: error("Missing EC2_HOST")
+      def resolvedUser     = (params?.EC2_USER ?: env.EC2_USER) ?: error("Missing EC2_USER")
 
-      echo "Resolved values: APP_NAME=${resolvedAppName}, PORT=${resolvedPort}, HOST=${resolvedHost}, USER=${resolvedUser}, ECR=${resolvedEcrImage}, TAG=${resolvedTag}, REGION=${resolvedRegion}, REGISTRY=${resolvedRegistry}"
+      echo "Resolved before deploy: APP_NAME=${resolvedAppName}, PORT=${resolvedPort}, HOST=${resolvedHost}, USER=${resolvedUser}, ECR=${resolvedEcrImage}, TAG=${resolvedTag}, REGION=${resolvedRegion}, REGISTRY=${resolvedRegistry}"
 
-      withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh',
-                                         keyFileVariable: 'EC2_KEYFILE',
-                                         usernameVariable: 'SSH_USER')]) {
+      withCredentials([sshUserPrivateKey(
+          credentialsId: 'ec2-ssh',
+          keyFileVariable: 'EC2_KEYFILE',
+          usernameVariable: 'SSH_USER')]) {
+
+        // Note: triple-double-quotes so Groovy will interpolate ${resolvedXxx} here.
         sh """#!/bin/bash
 set -eu
 
 echo "Using SSH keyfile: \$EC2_KEYFILE"
-chmod 600 "\$EC2_KEYFILE"
+chmod 600 "\$EC2_KEYFILE" || true
 
-echo "About to SSH to ${resolvedUser}@${resolvedHost} and ensure docker/aws exist, then deploy ${resolvedEcrImage}:${resolvedTag}"
+echo "About to SSH to ${resolvedUser}@${resolvedHost} and deploy ${resolvedEcrImage}:${resolvedTag}"
+echo "Jenkins-verified APP_NAME=${resolvedAppName}, PORT=${resolvedPort}"
 
 ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "${resolvedUser}@${resolvedHost}" bash -s <<'REMOTE'
 #!/bin/bash
 set -euo pipefail
 
-APP_NAME="${APP_NAME_PLACEHOLDER}"
-PORT="${PORT_PLACEHOLDER}"
-ECR="${ECR_PLACEHOLDER}"
-TAG="${TAG_PLACEHOLDER}"
-REGION="${REGION_PLACEHOLDER}"
-REGISTRY="${REGISTRY_PLACEHOLDER}"
+# --- Jenkins-provided values (interpolated by Groovy before sending) ---
+APP_NAME="${resolvedAppName}"
+PORT="${resolvedPort}"
+ECR="${resolvedEcrImage}"
+TAG="${resolvedTag}"
+REGION="${resolvedRegion}"
+REGISTRY="${resolvedRegistry}"
 
 echo "REMOTE: Connected. APP_NAME=\$APP_NAME PORT=\$PORT ECR=\$ECR TAG=\$TAG REGION=\$REGION"
 
-# Helper: run command with sudo if needed
+# helper: check for passwordless sudo
 _RUN_SUDO=""
 if command -v sudo >/dev/null 2>&1; then
-  # test whether sudo works passwordless
   if sudo -n true 2>/dev/null; then
     _RUN_SUDO="sudo"
   else
@@ -177,40 +181,29 @@ if command -v sudo >/dev/null 2>&1; then
   fi
 fi
 
-install_docker_apt() {
-  echo "REMOTE: Installing Docker (apt)..."
-  \$(_RUN_SUDO) apt-get update -y
-  \$(_RUN_SUDO) apt-get install -y ca-certificates curl gnupg lsb-release
-  mkdir -p /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \$(_RUN_SUDO) gpg --dearmour -o /etc/apt/keyrings/docker.gpg
-  echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | \$(_RUN_SUDO) tee /etc/apt/sources.list.d/docker.list >/dev/null
-  \$(_RUN_SUDO) apt-get update -y
-  \$(_RUN_SUDO) apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-}
-
-install_docker_yum() {
-  echo "REMOTE: Installing Docker (yum)..."
-  \$(_RUN_SUDO) yum install -y yum-utils
-  \$(_RUN_SUDO) yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-  \$(_RUN_SUDO) yum install -y docker-ce docker-ce-cli containerd.io
-  \$(_RUN_SUDO) systemctl enable --now docker
-}
-
-# Check docker
+# Ensure docker exists, otherwise try to install (requires passwordless sudo)
 if command -v docker >/dev/null 2>&1; then
   echo "REMOTE: docker found at \$(command -v docker)"
 else
-  echo "REMOTE: docker not found. Attempting install..."
-
+  echo "REMOTE: docker not found. Attempting install (requires passwordless sudo)..."
   if [ -n "\$_RUN_SUDO" ]; then
-    # Try detect distro
+    # Detect distro and install
     if [ -f /etc/debian_version ] || ( [ -f /etc/os-release ] && grep -qi 'ubuntu\\|debian' /etc/os-release ); then
-      install_docker_apt
-      \$(_RUN_SUDO) systemctl enable --now docker || true
+      echo "REMOTE: Installing Docker on Debian/Ubuntu..."
+      \$_RUN_SUDO apt-get update -y
+      \$_RUN_SUDO apt-get install -y ca-certificates curl gnupg lsb-release
+      mkdir -p /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \$_RUN_SUDO gpg --dearmour -o /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | \$_RUN_SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
+      \$_RUN_SUDO apt-get update -y
+      \$_RUN_SUDO apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      \$_RUN_SUDO systemctl enable --now docker || true
     elif [ -f /etc/redhat-release ] || ( [ -f /etc/os-release ] && grep -qi 'amzn\\|centos\\|rhel' /etc/os-release ); then
-      install_docker_yum
+      echo "REMOTE: Installing Docker on RHEL/CentOS/AmazonLinux..."
+      \$_RUN_SUDO yum install -y yum-utils
+      \$_RUN_SUDO yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      \$_RUN_SUDO yum install -y docker-ce docker-ce-cli containerd.io || true
+      \$_RUN_SUDO systemctl enable --now docker || true
     else
       echo "REMOTE: Unsupported distro for automatic Docker install. Please install docker manually."
       exit 3
@@ -224,62 +217,60 @@ else
       exit 4
     fi
   else
-    echo "REMOTE: sudo not available or requires password. Cannot auto-install docker. Please install docker manually and re-run."
+    echo "REMOTE: sudo not available or requires a password. Cannot auto-install docker. Please install docker manually and re-run."
     exit 5
   fi
 fi
 
-# Check aws cli
+# Ensure aws cli exists (optional install attempted if sudo available)
 if command -v aws >/dev/null 2>&1; then
   echo "REMOTE: aws cli found at \$(command -v aws)"
 else
-  echo "REMOTE: aws cli not found. If the instance has an IAM role for ECR, you may skip installing aws cli. Attempting minimal aws cli install..."
-
+  echo "REMOTE: aws cli not found. Attempting minimal install (optional; will continue even if install fails)..."
   if [ -n "\$_RUN_SUDO" ]; then
     TMPDIR=\$(mktemp -d)
-    pushd "\$TMPDIR"
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip || true
-    if [ -f awscliv2.zip ]; then
+    pushd "\$TMPDIR" >/dev/null 2>&1 || true
+    if curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip; then
       unzip -q awscliv2.zip || true
-      \$(_RUN_SUDO) ./aws/install || true
+      \$_RUN_SUDO ./aws/install || true
     fi
-    popd
+    popd >/dev/null 2>&1 || true
     rm -rf "\$TMPDIR"
     if command -v aws >/dev/null 2>&1; then
       echo "REMOTE: aws cli installed successfully"
     else
-      echo "REMOTE: aws cli not installed; continuing — you may rely on instance IAM role if available"
+      echo "REMOTE: aws cli not installed; continuing — ensure instance role has ECR access"
     fi
   else
-    echo "REMOTE: no sudo for aws install; continuing — ensure instance role available"
+    echo "REMOTE: no sudo for aws install; continuing — ensure instance role has ECR access"
   fi
 fi
 
-# Login to ECR if registry/region provided; otherwise assume instance role or manual login
+# Login to ECR if region & registry provided, otherwise assume instance role for access
 if [ -n "\$REGION" ] && [ -n "\$REGISTRY" ]; then
   echo "REMOTE: Logging in to ECR..."
   aws ecr get-login-password --region "\$REGION" | docker login --username AWS --password-stdin "\$REGISTRY"
 else
-  echo "REMOTE: REGION or REGISTRY not provided. Skipping docker login — ensure instance IAM role has ECR pull permissions."
+  echo "REMOTE: REGION or REGISTRY empty — skipping 'aws ecr login' (assuming instance IAM role or manual login)."
 fi
 
 echo "REMOTE: Pulling image \$ECR:\$TAG"
 docker pull "\$ECR:\$TAG"
 
-# stop & remove previous container
+# Stop & remove existing container if present
 if docker ps -a --format '{{.Names}}' | grep -q "^\\\$APP_NAME\\\$"; then
-  echo "REMOTE: stopping existing container \$APP_NAME"
+  echo "REMOTE: Stopping existing container \$APP_NAME..."
   docker stop "\$APP_NAME" || true
   docker rm "\$APP_NAME" || true
 fi
 
-echo "REMOTE: starting container \$APP_NAME on port \$PORT"
+echo "REMOTE: Starting container \$APP_NAME on port \$PORT..."
 docker run -d --name "\$APP_NAME" -p "\$PORT:\$PORT" --restart=always "\$ECR:\$TAG"
 
-echo "REMOTE: pruning old docker images"
+echo "REMOTE: Pruning old images..."
 docker image prune -f >/dev/null 2>&1 || true
 
-echo "REMOTE: deployment finished successfully."
+echo "REMOTE: Deployment finished successfully."
 REMOTE
 """
       } // withCredentials
