@@ -130,54 +130,44 @@ stage('Prep Gradle') {
 stage('Deploy to EC2') {
   steps {
     script {
-      // Resolve Jenkins params/env into Groovy variables (fail fast if missing)
+      // Resolve Jenkins params/env into Groovy variables
       def resolvedAppName  = (params?.APP_NAME ?: env.APP_NAME) ?: error("Missing APP_NAME")
       def resolvedPort     = (params?.EXPOSE_PORT ?: env.EXPOSE_PORT) ?: error("Missing EXPOSE_PORT")
-      def resolvedEcrImage = (params?.ECR_IMAGE ?: env.ECR_IMAGE) ?: (this.binding.hasVariable('ECR_IMAGE') ? ECR_IMAGE : '')
-      def resolvedTag      = (params?.TAG ?: env.TAG) ?: (this.binding.hasVariable('TAG') ? TAG : 'latest')
-      def resolvedRegion   = (params?.AWS_REGION ?: env.AWS_REGION) ?: (this.binding.hasVariable('AWS_REGION') ? AWS_REGION : '')
-      def resolvedRegistry = (params?.ECR_REGISTRY ?: env.ECR_REGISTRY) ?: (this.binding.hasVariable('ECR_REGISTRY') ? ECR_REGISTRY : '')
+      def resolvedEcrImage = (params?.ECR_IMAGE ?: env.ECR_IMAGE) ?: error("Missing ECR_IMAGE")
+      def resolvedTag      = (params?.TAG ?: env.TAG) ?: "latest"
+      def resolvedRegion   = (params?.AWS_REGION ?: env.AWS_REGION) ?: error("Missing AWS_REGION")
+      def resolvedRegistry = (params?.ECR_REGISTRY ?: env.ECR_REGISTRY) ?: error("Missing ECR_REGISTRY")
       def resolvedHost     = (params?.EC2_HOST ?: env.EC2_HOST) ?: error("Missing EC2_HOST")
       def resolvedUser     = (params?.EC2_USER ?: env.EC2_USER) ?: error("Missing EC2_USER")
 
-      echo "Resolved before deploy: APP_NAME=${resolvedAppName}, PORT=${resolvedPort}, HOST=${resolvedHost}, USER=${resolvedUser}, ECR=${resolvedEcrImage}, TAG=${resolvedTag}, REGION=${resolvedRegion}, REGISTRY=${resolvedRegistry}"
+      echo "Resolved before deploy: APP_NAME=${resolvedAppName}, PORT=${resolvedPort}, HOST=${resolvedHost}"
 
-      withCredentials([sshUserPrivateKey(
-          credentialsId: 'ec2-ssh',
-          keyFileVariable: 'EC2_KEYFILE',
-          usernameVariable: 'SSH_USER')]) {
+      withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh', keyFileVariable: 'EC2_KEYFILE')]) {
 
-        // Remote vars (interpolated now; safe)
-        def remoteVars =
-"APP_NAME=\"${resolvedAppName}\"\n" +
-"PORT=\"${resolvedPort}\"\n" +
-"ECR=\"${resolvedEcrImage}\"\n" +
-"TAG=\"${resolvedTag}\"\n" +
-"REGION=\"${resolvedRegion}\"\n" +
-"REGISTRY=\"${resolvedRegistry}\"\n\n"
+        // Remote shell variables (interpolated by Groovy)
+        def remoteVars = """
+APP_NAME="${resolvedAppName}"
+PORT="${resolvedPort}"
+ECR="${resolvedEcrImage}"
+TAG="${resolvedTag}"
+REGION="${resolvedRegion}"
+REGISTRY="${resolvedRegistry}"
+"""
 
-        // Remote body: use single-quoted Groovy string for raw content but with $(...) escaped as \$(
-        def remoteBody = '''echo "REMOTE: Connected. APP_NAME=$APP_NAME PORT=$PORT ECR=$ECR TAG=$TAG REGION=$REGION"
+        // Remote shell body: use single-quoted Groovy string so $ and \ are literal
+        def remoteBody = '''
+echo "REMOTE: Connected. APP_NAME=$APP_NAME PORT=$PORT ECR=$ECR TAG=$TAG REGION=$REGION"
 
-# helper: check for passwordless sudo
 _RUN_SUDO=""
-if command -v sudo >/dev/null 2>&1; then
-  if sudo -n true 2>/dev/null; then
-    _RUN_SUDO="sudo"
-  else
-    _RUN_SUDO=""
-  fi
+if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+  _RUN_SUDO="sudo"
 fi
 
-# Ensure docker exists, otherwise try to install (requires passwordless sudo)
-if command -v docker >/dev/null 2>&1; then
-  echo "REMOTE: docker found"
-else
-  echo "REMOTE: docker not found. Attempting install (requires passwordless sudo)..."
+# Docker installation if missing
+if ! command -v docker >/dev/null 2>&1; then
+  echo "REMOTE: docker not found. Installing..."
   if [ -n "$_RUN_SUDO" ]; then
-    # Detect distro and install
-    if [ -n "$_RUN_SUDO" ]; then
-    if [ -f /etc/debian_version ] || ( [ -f /etc/os-release ] && grep -qi "ubuntu\\|debian" /etc/os-release ); then
+    if [ -f /etc/debian_version ] || ( [ -f /etc/os-release ] && grep -Eqi "ubuntu|debian" /etc/os-release ); then
       echo "Installing Docker on Debian/Ubuntu..."
       $_RUN_SUDO apt-get update -y
       $_RUN_SUDO apt-get install -y ca-certificates curl gnupg lsb-release
@@ -189,7 +179,7 @@ else
       $_RUN_SUDO apt-get update -y
       $_RUN_SUDO apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       $_RUN_SUDO systemctl enable --now docker || true
-    elif [ -f /etc/redhat-release ] || ( [ -f /etc/os-release ] && grep -Eqi "amzn|centos|rhel" /etc/os-release ); then 
+    elif [ -f /etc/redhat-release ] || ( [ -f /etc/os-release ] && grep -Eqi "amzn|centos|rhel" /etc/os-release ); then
       echo "Installing Docker on RHEL/CentOS/Amazon Linux..."
       $_RUN_SUDO yum install -y yum-utils
       $_RUN_SUDO yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
@@ -200,81 +190,46 @@ else
       exit 3
     fi
   else
-    echo "sudo not available; please install docker manually."
+    echo "No sudo: please install docker manually."
     exit 5
   fi
 fi
 
-# Ensure aws cli exists (optional install attempted if sudo available)
-if command -v aws >/dev/null 2>&1; then
-  echo "REMOTE: aws cli found"
-else
-  echo "REMOTE: aws cli not found. Attempting minimal install (optional; will continue even if install fails)..."
-  if [ -n "$_RUN_SUDO" ]; then
-    TMPDIR=\$(mktemp -d)
-    pushd "\$TMPDIR" >/dev/null 2>&1 || true
-    if curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip; then
-      unzip -q awscliv2.zip || true
-      $_RUN_SUDO ./aws/install || true
-    fi
-    popd >/dev/null 2>&1 || true
-    rm -rf "\$TMPDIR"
-    if command -v aws >/dev/null 2>&1; then
-      echo "REMOTE: aws cli installed successfully"
-    else
-      echo "REMOTE: aws cli not installed; continuing — ensure instance role has ECR access"
-    fi
-  else
-    echo "REMOTE: no sudo for aws install; continuing — ensure instance role has ECR access"
-  fi
+# AWS CLI check (optional install)
+if ! command -v aws >/dev/null 2>&1; then
+  echo "REMOTE: AWS CLI not found"
 fi
 
-# Login to ECR if region & registry provided, otherwise assume instance role for access
+# Login to ECR and deploy
 if [ -n "$REGION" ] && [ -n "$REGISTRY" ]; then
-  echo "REMOTE: Logging in to ECR..."
   aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
-else
-  echo "REMOTE: REGION or REGISTRY empty — skipping 'aws ecr login' (assuming instance IAM role or manual login)."
 fi
 
-echo "REMOTE: Pulling image $ECR:$TAG"
 docker pull "$ECR:$TAG"
 
-# Stop & remove existing container if present
-if docker ps -a --format '{{.Names}}' | grep -q "^\\$APP_NAME\\$"; then
-  echo "REMOTE: Stopping existing container $APP_NAME..."
+if docker ps -a --format '{{.Names}}' | grep -q "^$APP_NAME$"; then
   docker stop "$APP_NAME" || true
   docker rm "$APP_NAME" || true
 fi
 
-echo "REMOTE: Starting container $APP_NAME on port $PORT..."
 docker run -d --name "$APP_NAME" -p "$PORT:$PORT" --restart=always "$ECR:$TAG"
-
-echo "REMOTE: Pruning old images..."
 docker image prune -f >/dev/null 2>&1 || true
-
-echo "REMOTE: Deployment finished successfully."
+echo "REMOTE: Deployment complete."
 '''
 
-        // Compose full script: header + remoteVars + remoteBody + final REMOTE marker
+        // Compose full SSH script (heredoc marker REMOTE must be at column 0)
         def fullSh = """#!/bin/bash
 set -eu
-
-echo "Using SSH keyfile: \$EC2_KEYFILE"
-chmod 600 "\$EC2_KEYFILE" || true
-
-echo "About to SSH to ${resolvedUser}@${resolvedHost} and deploy ${resolvedEcrImage}:${resolvedTag}"
-echo "Jenkins-verified APP_NAME=${resolvedAppName}, PORT=${resolvedPort}"
+chmod 600 "\$EC2_KEYFILE"
 
 ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "${resolvedUser}@${resolvedHost}" bash -s <<'REMOTE'
 """ + remoteVars + remoteBody + "\nREMOTE\n"
 
-        // Execute assembled script
         sh fullSh
-      } // withCredentials
-    } // script
-  } // steps
-} // stage
+      }
+    }
+  }
+}
   }
 
   post {
