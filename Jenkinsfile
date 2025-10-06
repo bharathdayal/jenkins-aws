@@ -147,29 +147,24 @@ stage('Deploy to EC2') {
           keyFileVariable: 'EC2_KEYFILE',
           usernameVariable: 'SSH_USER')]) {
 
-        // Note: triple-double-quotes so Groovy will interpolate ${resolvedXxx} here.
-        sh """#!/bin/bash
-set -eu
-
-echo "Using SSH keyfile: \$EC2_KEYFILE"
-chmod 600 "\$EC2_KEYFILE" || true
-
-echo "About to SSH to ${resolvedUser}@${resolvedHost} and deploy ${resolvedEcrImage}:${resolvedTag}"
-echo "Jenkins-verified APP_NAME=${resolvedAppName}, PORT=${resolvedPort}"
-
-ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "${resolvedUser}@${resolvedHost}" bash -s <<'REMOTE'
-#!/bin/bash
+        // Build the sh script by concatenating the resolved Groovy variables into the heredoc body.
+        def remoteScriptHeader =
+"""#!/bin/bash
 set -euo pipefail
 
-# --- Jenkins-provided values (interpolated by Groovy before sending) ---
-APP_NAME="${resolvedAppName}"
-PORT="${resolvedPort}"
-ECR="${resolvedEcrImage}"
-TAG="${resolvedTag}"
-REGION="${resolvedRegion}"
-REGISTRY="${resolvedRegistry}"
+# Jenkins-provided values (injected by Groovy)
+"""
 
-echo "REMOTE: Connected. APP_NAME=\$APP_NAME PORT=\$PORT ECR=\$ECR TAG=\$TAG REGION=\$REGION"
+        def remoteScriptVars =
+"APP_NAME=\"" + resolvedAppName + "\"\n" +
+"PORT=\"" + resolvedPort + "\"\n" +
+"ECR=\"" + resolvedEcrImage + "\"\n" +
+"TAG=\"" + resolvedTag + "\"\n" +
+"REGION=\"" + resolvedRegion + "\"\n" +
+"REGISTRY=\"" + resolvedRegistry + "\"\n\n"
+
+        def remoteScriptBody =
+"""echo "REMOTE: Connected. APP_NAME=\\$APP_NAME PORT=\\$PORT ECR=\\$ECR TAG=\\$TAG REGION=\\$REGION"
 
 # helper: check for passwordless sudo
 _RUN_SUDO=""
@@ -183,27 +178,27 @@ fi
 
 # Ensure docker exists, otherwise try to install (requires passwordless sudo)
 if command -v docker >/dev/null 2>&1; then
-  echo "REMOTE: docker found at \$(command -v docker)"
+  echo "REMOTE: docker found at \\$(command -v docker)"
 else
   echo "REMOTE: docker not found. Attempting install (requires passwordless sudo)..."
-  if [ -n "\$_RUN_SUDO" ]; then
+  if [ -n "\\$_RUN_SUDO" ]; then
     # Detect distro and install
     if [ -f /etc/debian_version ] || ( [ -f /etc/os-release ] && grep -qi 'ubuntu\\|debian' /etc/os-release ); then
       echo "REMOTE: Installing Docker on Debian/Ubuntu..."
-      \$_RUN_SUDO apt-get update -y
-      \$_RUN_SUDO apt-get install -y ca-certificates curl gnupg lsb-release
+      \\$_RUN_SUDO apt-get update -y
+      \\$_RUN_SUDO apt-get install -y ca-certificates curl gnupg lsb-release
       mkdir -p /etc/apt/keyrings
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \$_RUN_SUDO gpg --dearmour -o /etc/apt/keyrings/docker.gpg
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | \$_RUN_SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
-      \$_RUN_SUDO apt-get update -y
-      \$_RUN_SUDO apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-      \$_RUN_SUDO systemctl enable --now docker || true
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \\$_RUN_SUDO gpg --dearmour -o /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"\$VERSION_CODENAME\") stable" | \\$_RUN_SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
+      \\$_RUN_SUDO apt-get update -y
+      \\$_RUN_SUDO apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      \\$_RUN_SUDO systemctl enable --now docker || true
     elif [ -f /etc/redhat-release ] || ( [ -f /etc/os-release ] && grep -qi 'amzn\\|centos\\|rhel' /etc/os-release ); then
       echo "REMOTE: Installing Docker on RHEL/CentOS/AmazonLinux..."
-      \$_RUN_SUDO yum install -y yum-utils
-      \$_RUN_SUDO yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-      \$_RUN_SUDO yum install -y docker-ce docker-ce-cli containerd.io || true
-      \$_RUN_SUDO systemctl enable --now docker || true
+      \\$_RUN_SUDO yum install -y yum-utils
+      \\$_RUN_SUDO yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      \\$_RUN_SUDO yum install -y docker-ce docker-ce-cli containerd.io || true
+      \\$_RUN_SUDO systemctl enable --now docker || true
     else
       echo "REMOTE: Unsupported distro for automatic Docker install. Please install docker manually."
       exit 3
@@ -211,7 +206,7 @@ else
 
     # verify docker after install
     if command -v docker >/dev/null 2>&1; then
-      echo "REMOTE: docker installed successfully at \$(command -v docker)"
+      echo "REMOTE: docker installed successfully at \\$(command -v docker)"
     else
       echo "REMOTE: docker install attempted but docker still not found"
       exit 4
@@ -224,18 +219,18 @@ fi
 
 # Ensure aws cli exists (optional install attempted if sudo available)
 if command -v aws >/dev/null 2>&1; then
-  echo "REMOTE: aws cli found at \$(command -v aws)"
+  echo "REMOTE: aws cli found at \\$(command -v aws)"
 else
   echo "REMOTE: aws cli not found. Attempting minimal install (optional; will continue even if install fails)..."
-  if [ -n "\$_RUN_SUDO" ]; then
-    TMPDIR=\$(mktemp -d)
-    pushd "\$TMPDIR" >/dev/null 2>&1 || true
+  if [ -n "\\$_RUN_SUDO" ]; then
+    TMPDIR=\\$(mktemp -d)
+    pushd "\\$TMPDIR" >/dev/null 2>&1 || true
     if curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip; then
       unzip -q awscliv2.zip || true
-      \$_RUN_SUDO ./aws/install || true
+      \\$_RUN_SUDO ./aws/install || true
     fi
     popd >/dev/null 2>&1 || true
-    rm -rf "\$TMPDIR"
+    rm -rf "\\$TMPDIR"
     if command -v aws >/dev/null 2>&1; then
       echo "REMOTE: aws cli installed successfully"
     else
@@ -247,32 +242,48 @@ else
 fi
 
 # Login to ECR if region & registry provided, otherwise assume instance role for access
-if [ -n "\$REGION" ] && [ -n "\$REGISTRY" ]; then
+if [ -n "\\$REGION" ] && [ -n "\\$REGISTRY" ]; then
   echo "REMOTE: Logging in to ECR..."
-  aws ecr get-login-password --region "\$REGION" | docker login --username AWS --password-stdin "\$REGISTRY"
+  aws ecr get-login-password --region "\\$REGION" | docker login --username AWS --password-stdin "\\$REGISTRY"
 else
   echo "REMOTE: REGION or REGISTRY empty — skipping 'aws ecr login' (assuming instance IAM role or manual login)."
 fi
 
-echo "REMOTE: Pulling image \$ECR:\$TAG"
-docker pull "\$ECR:\$TAG"
+echo "REMOTE: Pulling image \\$ECR:\\$TAG"
+docker pull "\\$ECR:\\$TAG"
 
 # Stop & remove existing container if present
-if docker ps -a --format '{{.Names}}' | grep -q "^\\\$APP_NAME\\\$"; then
-  echo "REMOTE: Stopping existing container \$APP_NAME..."
-  docker stop "\$APP_NAME" || true
-  docker rm "\$APP_NAME" || true
+if docker ps -a --format '{{.Names}}' | grep -q "^\\\\$APP_NAME\\\\$"; then
+  echo "REMOTE: Stopping existing container \\$APP_NAME..."
+  docker stop "\\$APP_NAME" || true
+  docker rm "\\$APP_NAME" || true
 fi
 
-echo "REMOTE: Starting container \$APP_NAME on port \$PORT..."
-docker run -d --name "\$APP_NAME" -p "\$PORT:\$PORT" --restart=always "\$ECR:\$TAG"
+echo "REMOTE: Starting container \\$APP_NAME on port \\$PORT..."
+docker run -d --name "\\$APP_NAME" -p "\\$PORT:\\$PORT" --restart=always "\\$ECR:\\$TAG"
 
 echo "REMOTE: Pruning old images..."
 docker image prune -f >/dev/null 2>&1 || true
 
 echo "REMOTE: Deployment finished successfully."
-REMOTE
 """
+
+        // Compose full script that will be fed to sh on Jenkins agent.
+        // Note: we must carefully place the heredoc end marker (REMOTE) at column 0.
+        def fullSh = """#!/bin/bash
+set -eu
+
+echo "Using SSH keyfile: \$EC2_KEYFILE"
+chmod 600 "\$EC2_KEYFILE" || true
+
+echo "About to SSH to ${resolvedUser}@${resolvedHost} and deploy ${resolvedEcrImage}:${resolvedTag}"
+echo "Jenkins-verified APP_NAME=${resolvedAppName}, PORT=${resolvedPort}"
+
+ssh -o StrictHostKeyChecking=no -i "\$EC2_KEYFILE" "${resolvedUser}@${resolvedHost}" bash -s <<'REMOTE'
+""" + remoteScriptHeader + remoteScriptVars + remoteScriptBody + "\nREMOTE\n"
+
+        // Run the assembled script; Groovy will not see any ${...} inside the remote script body
+        sh fullSh
       } // withCredentials
     } // script
   } // steps
