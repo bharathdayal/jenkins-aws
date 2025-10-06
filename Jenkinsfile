@@ -171,7 +171,7 @@ fi
 
 # Ensure docker exists, otherwise try to install (requires passwordless sudo)
 if command -v docker >/dev/null 2>&1; then
-  echo "REMOTE: docker found at \$\(command -v docker\)"
+  echo "REMOTE: docker found"
 else
   echo "REMOTE: docker not found. Attempting install (requires passwordless sudo)..."
   if [ -n "$_RUN_SUDO" ]; then
