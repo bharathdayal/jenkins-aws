@@ -176,36 +176,31 @@ else
   echo "REMOTE: docker not found. Attempting install (requires passwordless sudo)..."
   if [ -n "$_RUN_SUDO" ]; then
     # Detect distro and install
-    if [ -f /etc/debian_version ] || ( [ -f /etc/os-release ] && grep -qi "ubuntu\\|debian" /etc/os-release ); then
+    if [ -n "$_RUN_SUDO" ]; then
+    if [ -f /etc/debian_version ] || ( [ -f /etc/os-release ] && grep -qi "ubuntu\|debian" /etc/os-release ); then
       echo "Installing Docker on Debian/Ubuntu..."
       $_RUN_SUDO apt-get update -y
       $_RUN_SUDO apt-get install -y ca-certificates curl gnupg lsb-release
       mkdir -p /etc/apt/keyrings
       curl -fsSL https://download.docker.com/linux/ubuntu/gpg | $_RUN_SUDO gpg --dearmour -o /etc/apt/keyrings/docker.gpg
-      echo "deb [arch=\$\(dpkg --print-architecture\) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$\(.\ /etc/os-release\ \&\&\ echo \"\$VERSION_CODENAME\"\) stable" | $_RUN_SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
+      arch=$(dpkg --print-architecture)
+      codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+      echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${codename} stable" | $_RUN_SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
       $_RUN_SUDO apt-get update -y
       $_RUN_SUDO apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       $_RUN_SUDO systemctl enable --now docker || true
-    elif [ -f /etc/redhat-release ] || ( [ -f /etc/os-release ] && grep -qi 'amzn\|centos\|rhel' /etc/os-release ); then
-      echo "REMOTE: Installing Docker on RHEL/CentOS/AmazonLinux..."
+    elif [ -f /etc/redhat-release ] || ( [ -f /etc/os-release ] && grep -qi "amzn\|centos\|rhel" /etc/os-release ); then
+      echo "Installing Docker on RHEL/CentOS/Amazon Linux..."
       $_RUN_SUDO yum install -y yum-utils
       $_RUN_SUDO yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
       $_RUN_SUDO yum install -y docker-ce docker-ce-cli containerd.io || true
       $_RUN_SUDO systemctl enable --now docker || true
     else
-      echo "REMOTE: Unsupported distro for automatic Docker install. Please install docker manually."
+      echo "Unsupported distro for Docker install."
       exit 3
     fi
-
-    # verify docker after install
-    if command -v docker >/dev/null 2>&1; then
-      echo "REMOTE: docker installed successfully at \$\(command -v docker\)"
-    else
-      echo "REMOTE: docker install attempted but docker still not found"
-      exit 4
-    fi
   else
-    echo "REMOTE: sudo not available or requires a password. Cannot auto-install docker. Please install docker manually and re-run."
+    echo "sudo not available; please install docker manually."
     exit 5
   fi
 fi
