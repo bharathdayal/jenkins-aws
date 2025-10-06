@@ -207,7 +207,7 @@ fi
 
 # Ensure aws cli exists (optional install attempted if sudo available)
 if command -v aws >/dev/null 2>&1; then
-  echo "REMOTE: aws cli found at \$\(command -v aws\)"
+  echo "REMOTE: aws cli found"
 else
   echo "REMOTE: aws cli not found. Attempting minimal install (optional; will continue even if install fails)..."
   if [ -n "$_RUN_SUDO" ]; then
