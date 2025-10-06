@@ -176,8 +176,8 @@ else
   echo "REMOTE: docker not found. Attempting install (requires passwordless sudo)..."
   if [ -n "$_RUN_SUDO" ]; then
     # Detect distro and install
-    if [ -f /etc/debian_version ] || ( [ -f /etc/os-release ] && grep -qi 'ubuntu\|debian' /etc/os-release ); then
-      echo "REMOTE: Installing Docker on Debian/Ubuntu..."
+    if [ -f /etc/debian_version ] || ( [ -f /etc/os-release ] && grep -qi "ubuntu\\|debian" /etc/os-release ); then
+      echo "Installing Docker on Debian/Ubuntu..."
       $_RUN_SUDO apt-get update -y
       $_RUN_SUDO apt-get install -y ca-certificates curl gnupg lsb-release
       mkdir -p /etc/apt/keyrings
