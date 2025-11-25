@@ -52,6 +52,35 @@ The Jenkins pipeline performs the following steps:
      - Name: `APP_NAME`
      - Port mapping: `PORT:PORT`
      - Restart policy: `--restart=always`
+   - STEPS to Deploy
+   - Logs in to ECR:
+     ```bash
+     aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+     ```
+   - Pulls the latest image from ECR:
+     ```bash
+     docker pull "$ECR:$TAG"
+     ```
+   - Stops & removes any existing container:
+     ```bash
+     docker stop "$APP_NAME" || true
+     docker rm "$APP_NAME" || true
+     ```
+   - Runs the container with:
+     ```bash
+     docker run -d --name "$APP_NAME" \
+       -p "$PORT:$PORT" \
+       --restart=always \
+       "$ECR:$TAG"
+     ```
+   - Cleans up unused images:
+     ```bash
+     docker image prune -f
+     ```
+   - Application becomes accessible at:
+     ```
+     http://<EC2_HOST>:8086/
+     ```
 
 ---
 
