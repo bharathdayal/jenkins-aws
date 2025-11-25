@@ -15,7 +15,7 @@ pipeline {
     string(name: 'AWS_ACCOUNT_ID', defaultValue: '115047389529', description: 'AWS Account ID')
     string(name: 'AWS_REGION', defaultValue: 'us-east-2', description: 'AWS region')
     string(name: 'ECR_REPO', defaultValue: 'java-jenkins-aws', description: 'ECR repository name (usually same as APP_NAME)')
-    string(name: 'EC2_HOST', defaultValue: 'ec2-18-223-152-111.us-east-2.compute.amazonaws.com', description: 'EC2 public DNS or IP')
+    string(name: 'EC2_HOST', defaultValue: 'ec2-13-59-162-24.us-east-2.compute.amazonaws.com', description: 'EC2 public DNS or IP')
     string(name: 'EC2_USER', defaultValue: 'ec2-user', description: 'SSH user (ec2-user, ubuntu, etc.)')
   }
 
